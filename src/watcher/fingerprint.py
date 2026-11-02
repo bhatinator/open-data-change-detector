@@ -144,17 +144,18 @@ def compute_fingerprint(
     fingerprint_duration = time.perf_counter() - started_at
 
     return {
-        "schema": sorted(schema),
-        "count": len(features),
-        "event_hashes": sorted_event_hashes,
-        "content_hash": content_hash,
-        "fetch_duration_seconds": round(
-            float(fetch_duration_seconds), 6
-        ),
-        "fingerprint_duration_seconds": round(
-            fingerprint_duration, 6
-        ),
-        "fetch_status": fetch_status,
-        "newest_event_time": newest_event_iso,
-        "fetched_at": fetched_at.isoformat(),
+    "schema": sorted(schema),
+    "count": len(features),
+    "event_hashes": sorted_event_hashes,
+    "content_hash": content_hash,
+    "fetch_duration_seconds": round(
+        float(fetch_duration_seconds), 6
+    ),
+    "fingerprint_duration_seconds": round(
+        fingerprint_duration, 6
+    ),
+    "fetch_status": fetch_status,
+    "newest_event_time": newest_event_iso,
+    "newest_event_ms": newest_event_time,
+    "fetched_at": fetched_at.isoformat(),
     }
