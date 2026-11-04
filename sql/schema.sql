@@ -36,3 +36,17 @@ CREATE TABLE IF NOT EXISTS alerts (
   alert_type TEXT, 
   details JSONB
   );
+
+  
+CREATE TABLE IF NOT EXISTS snapshot_events (
+    snapshot_id INT REFERENCES snapshots(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    event_hash TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_watch_fetched
+ON snapshots (watch_id, fetched_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_watch_created
+ON alerts (watch_id, created_at DESC);

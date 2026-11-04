@@ -5,7 +5,19 @@ watches:
     endtime: "2026-09-01"
     minmagnitude: 2.5
 
+    detectors:
+      min_count_change: 20
+      max_count_change_pct: 50
+      alert_on_revision: true
+      alert_on_content_change: false
+
   - name: rolling-7d
     kind: rolling
     days: 7
     minmagnitude: 2.5
+
+    detectors:
+      min_count_change: 20
+      max_count_change_pct: 50
+      alert_on_revision: true
+      alert_on_content_change: false

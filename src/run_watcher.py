@@ -1,33 +1,62 @@
 
 import time
 import json
-import hashlib
+
 from watcher.fetcher import fetch_all_earthquakes
 from watcher.watches import load_watches, build_query
 from watcher.fingerprint import compute_fingerprint
-from watcher.db import upsert_watch, save_snapshot, upsert_event_state
-from watcher.db import upsert_watch, save_snapshot, upsert_event_state
+
+from watcher.db import (
+    upsert_watch,
+    get_latest_snapshot,
+    get_snapshot_events,
+    save_run,
+)
+
+from watcher.detectors import run_detectors
 
 
 def main():
-    # 1. Load the watch configurations
+    # STEP 1: Load watch configurations
     watches = load_watches()
 
-    # 2. Choose one watch to run
+    # STEP 2: Select the watch
     watch = next(
-        (item for item in watches if item["name"] == "rolling-7d"),
+        (
+            item for item in watches
+            if item["name"] == "rolling-7d"
+        ),
         None,
     )
 
     if watch is None:
-        raise ValueError("The rolling-7d watch was not found.")
+        raise ValueError(
+            "The rolling-7d watch was not found."
+        )
 
-    # 3. Build the USGS API query
+    # STEP 3: Build USGS API query
     query = build_query(watch)
+
     print(f"Running watch: {watch['name']}")
     print(f"Query: {query}")
 
-    # 4. Fetch the actual earthquake records
+    # STEP 4: Register watch and load previous state
+    watch_id = upsert_watch(watch["name"], watch)
+
+    previous = get_latest_snapshot(watch_id)
+
+    if previous is None:
+        previous_events = {}
+        print("No previous snapshot found.")
+    else:
+        previous_events = get_snapshot_events(
+            previous["id"]
+        )
+        print(
+            f"Previous snapshot ID: {previous['id']}"
+        )
+
+    # STEP 5: Fetch earthquake records
     start = time.perf_counter()
 
     records = fetch_all_earthquakes(
@@ -40,55 +69,65 @@ def main():
 
     print(f"Records fetched: {len(records)}")
 
-    # 5. Calculate the fingerprint
+    # STEP 6: Compute fingerprint
     fingerprint = compute_fingerprint(
         records,
         fetch_duration_seconds=fetch_duration,
         fetch_status="success",
     )
 
-    # Save the watch configuration and get its database ID.
-    watch_id = upsert_watch(watch["name"], watch)
+    current_events = fingerprint["event_hashes"]
 
-    # Save the fingerprint from this run.
-    snapshot_id = save_snapshot(watch_id, fingerprint)
+    # STEP 7: Load detector thresholds
+    detector_config = watch.get("detectors", {})
 
-    print(f"Saved watch ID: {watch_id}")
+    # STEP 8: Compare previous and current states
+    # Older Step 5 snapshots do not have snapshot_events.
+    # Treat the first Step 6 run as a baseline.
+    has_baseline = (
+        previous is not None
+        and len(previous_events) > 0
+    )
+
+    result = run_detectors(
+        previous=previous if has_baseline else None,
+        current=fingerprint,
+        previous_events=(
+            previous_events if has_baseline else {}
+        ),
+        current_events=current_events,
+        config=detector_config,
+        closed_window=(watch["kind"] == "closed"),
+    )
+
+    # STEP 9: Display event classification
+    summary = result["event_summary"]
+    alerts = result["alerts"]
+
+    print("\nEvent classification:")
+    print(json.dumps(summary, indent=2))
+
+    print(f"\nAlerts generated: {len(alerts)}")
+
+    for alert in alerts:
+        print(
+            f"- {alert['alert_type']}: "
+            f"{alert['details']}"
+        )
+
+    # STEP 10: Save all results in PostgreSQL
+    snapshot_id = save_run(
+        watch_id=watch_id,
+        fingerprint=fingerprint,
+        alerts=alerts,
+        event_hashes=current_events,
+    )
+
+    print(f"\nSaved watch ID: {watch_id}")
     print(f"Saved snapshot ID: {snapshot_id}")
+    print(f"Saved event records: {len(current_events)}")
+    print(f"Saved alerts: {len(alerts)}")
 
-    # Save each event's hash from the fingerprint.
-    for event_id, event_hash_value in fingerprint["event_hashes"].items():
-        upsert_event_state(
-        watch_id,
-        event_id,
-        event_hash_value
-    )
-
-    print(
-    f"Updated event state for "
-    f"{len(fingerprint['event_hashes'])} events."
-    )
-
-    # Save each earthquake's latest known hash.
-    for record in records:
-        event_id = record.get("id")
-
-        if not event_id:
-            continue
-
-    canonical_record = json.dumps(
-        record,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-    event_hash = hashlib.sha256(
-        canonical_record.encode("utf-8")
-    ).hexdigest()
-
-    upsert_event_state(watch_id, event_id, event_hash)
-
-    print(f"Updated event state for {len(records)} fetched records.")
 
 if __name__ == "__main__":
     main()
