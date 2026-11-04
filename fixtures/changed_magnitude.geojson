@@ -1,0 +1,55 @@
+
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "title": "Test Earthquake Dataset",
+    "status": 200
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "event_A",
+      "properties": {
+        "mag": 4.5,
+        "place": "California",
+        "time": 1791000000000,
+        "status": "automatic",
+        "updated": 1791000100000
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-117.9, 34.1, 5]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "event_B",
+      "properties": {
+        "mag": 4.1,
+        "place": "Nevada",
+        "time": 1791000200000,
+        "status": "automatic",
+        "updated": 1791000300000
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-116.8, 38.2, 8]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "event_C",
+      "properties": {
+        "mag": 2.8,
+        "place": "Alaska",
+        "time": 1791000400000,
+        "status": "automatic",
+        "updated": 1791000500000
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-149.9, 61.2, 10]
+      }
+    }
+  ]
+}

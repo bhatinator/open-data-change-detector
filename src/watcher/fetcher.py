@@ -16,18 +16,26 @@ def fetch_page(
     session,
     offset,
     limit=100,
-    timeout=30,
+    timeout=30, 
     max_retries=3,
     backoff_factor=1.0,
+    query=None
 ):
     """Fetch one page, retrying temporary failures."""
 
     params = {
-        "format": "geojson",
-        "limit": limit,
-        "offset": offset,
-        "orderby": "time",
+    "format": "geojson",
+    "limit": limit,
+    "offset": offset,
+    "orderby": "time",
     }
+
+    if query:
+        params.update(query)
+
+    # Keep pagination values controlled by fetch_page
+    params["limit"] = limit
+    params["offset"] = offset
 
     for attempt in range(max_retries + 1):
         try:
@@ -97,6 +105,7 @@ def fetch_all_earthquakes(
     backoff_factor=1.0,
     page_delay=0.5,
     max_records=500,
+    query=None
 ):
     """Fetch earthquake records page by page."""
 
@@ -117,6 +126,7 @@ def fetch_all_earthquakes(
                 timeout=timeout,
                 max_retries=max_retries,
                 backoff_factor=backoff_factor,
+                query=query
             )
 
             if not page:
