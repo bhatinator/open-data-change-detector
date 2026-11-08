@@ -4,7 +4,14 @@ from watcher.db import get_connection
 from watcher.discord_notifier import send_alert
 
 
-def main():
+# Check for new notifications every 5 seconds
+POLL_INTERVAL_SECONDS = 5
+
+
+def process_pending_notifications():
+    """
+    Find pending notifications and send them to Discord.
+    """
 
     with get_connection() as conn:
 
@@ -24,10 +31,10 @@ def main():
 
             rows = cur.fetchall()
 
-            print(
-                f"Pending notifications: "
-                f"{len(rows)}"
-            )
+            if rows:
+                print(
+                    f"Pending notifications: {len(rows)}"
+                )
 
             for row_id, payload in rows:
 
@@ -35,14 +42,10 @@ def main():
 
                     alert = {
                         "alert_type":
-                            payload[
-                                "alert_type"
-                            ],
+                            payload["alert_type"],
 
                         "details":
-                            payload[
-                                "details"
-                            ],
+                            payload["details"],
                     }
 
                     send_alert(alert)
@@ -53,8 +56,7 @@ def main():
                         SET
                             status = 'sent',
                             sent_at = NOW(),
-                            attempts =
-                                attempts + 1,
+                            attempts = attempts + 1,
                             last_error = NULL
                         WHERE id = %s;
                         """,
@@ -62,13 +64,8 @@ def main():
                     )
 
                     print(
-                        f"Sent notification "
-                        f"{row_id}"
+                        f"Sent notification {row_id}"
                     )
-
-                    # Small delay between
-                    # separate notifications
-                    time.sleep(1)
 
                 except Exception as error:
 
@@ -77,8 +74,7 @@ def main():
                         UPDATE notification_outbox
                         SET
                             status = 'failed',
-                            attempts =
-                                attempts + 1,
+                            attempts = attempts + 1,
                             last_error = %s
                         WHERE id = %s;
                         """,
@@ -90,9 +86,66 @@ def main():
 
                     print(
                         f"Failed notification "
-                        f"{row_id}: "
-                        f"{error}"
+                        f"{row_id}: {error}"
                     )
+
+
+def main():
+
+    print("=" * 60)
+    print("DISCORD NOTIFICATION WORKER")
+    print("=" * 60)
+
+    print(
+        f"Checking for notifications every "
+        f"{POLL_INTERVAL_SECONDS} seconds."
+    )
+
+    print(
+        "Press Ctrl+C to stop."
+    )
+
+    while True:
+
+        try:
+
+            process_pending_notifications()
+
+        except KeyboardInterrupt:
+
+            print(
+                "\nNotification worker stopped."
+            )
+
+            break
+
+        except Exception as error:
+
+            print(
+                "\nNotification worker error:"
+            )
+
+            print(
+                f"{type(error).__name__}: {error}"
+            )
+
+            print(
+                "Will retry on the next cycle."
+            )
+
+        try:
+
+            time.sleep(
+                POLL_INTERVAL_SECONDS
+            )
+
+        except KeyboardInterrupt:
+
+            print(
+                "\nNotification worker stopped."
+            )
+
+            break
 
 
 if __name__ == "__main__":

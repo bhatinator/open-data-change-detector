@@ -8,6 +8,10 @@ API_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 
 logger = logging.getLogger(__name__)
 
+USGS_REALTIME_FEED = (
+    "https://earthquake.usgs.gov/"
+    "earthquakes/feed/v1.0/summary/all_hour.geojson"
+)
 
 class FetchError(Exception):
     """Raised when a dataset cannot be fetched after retries."""
@@ -144,3 +148,54 @@ def fetch_all_earthquakes(
 
     logger.info("Fetch completed: %s records", len(records))
     return records
+
+def fetch_realtime_earthquakes(timeout=30, retries=3):
+    """
+    Fetch the latest earthquake data from the
+    USGS real-time GeoJSON feed.
+
+    Returns:
+        list: List of earthquake event dictionaries.
+    """
+
+    for attempt in range(1, retries + 1):
+
+        try:
+            logger.info(
+                "Fetching USGS real-time earthquake feed..."
+            )
+
+            response = requests.get(
+                USGS_REALTIME_FEED,
+                timeout=timeout,
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            records = data.get("features", [])
+
+            logger.info(
+                "Fetched %d earthquake events",
+                len(records),
+            )
+
+            return records
+
+        except requests.RequestException as error:
+
+            logger.warning(
+                "USGS request failed "
+                "(attempt %d/%d): %s",
+                attempt,
+                retries,
+                error,
+            )
+
+            if attempt < retries:
+                sleep_time = 2 ** attempt
+                time.sleep(sleep_time)
+
+            else:
+                raise
