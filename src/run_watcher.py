@@ -5,11 +5,13 @@ import json
 from watcher.fetcher import fetch_all_earthquakes
 from watcher.watches import load_watches, build_query
 from watcher.fingerprint import compute_fingerprint
+from watcher.discord_notifier import send_alert
 
 from watcher.db import (
     upsert_watch,
     get_latest_snapshot,
     get_snapshot_events,
+    get_snapshot_event_data,
     save_run,
 )
 
@@ -47,14 +49,37 @@ def main():
 
     if previous is None:
         previous_events = {}
-        print("No previous snapshot found.")
+        previous_event_data = {}
+
+        print(
+            "No previous snapshot found."
+        )
+
     else:
-        previous_events = get_snapshot_events(
+        previous_events = (
+        get_snapshot_events(
             previous["id"]
         )
-        print(
-            f"Previous snapshot ID: {previous['id']}"
+    )
+
+    previous_event_records = (
+        get_snapshot_event_data(
+            previous["id"]
         )
+    )
+
+    previous_event_data = {
+        event_id:
+            item["event_data"]
+
+        for event_id, item
+        in previous_event_records.items()
+    }
+
+    print(
+        f"Previous snapshot ID: "
+        f"{previous['id']}"
+    )
 
     # STEP 5: Fetch earthquake records
     start = time.perf_counter()
@@ -78,6 +103,12 @@ def main():
 
     current_events = fingerprint["event_hashes"]
 
+    current_event_data = {
+    event.get("id"): event
+    for event in records
+    if event.get("id")
+    }
+
     # STEP 7: Load detector thresholds
     detector_config = watch.get("detectors", {})
 
@@ -90,15 +121,36 @@ def main():
     )
 
     result = run_detectors(
-        previous=previous if has_baseline else None,
-        current=fingerprint,
-        previous_events=(
-            previous_events if has_baseline else {}
-        ),
-        current_events=current_events,
-        config=detector_config,
-        closed_window=(watch["kind"] == "closed"),
-    )
+    previous=(
+        previous
+        if has_baseline
+        else None
+    ),
+
+    current=fingerprint,
+
+    previous_events=(
+        previous_events
+        if has_baseline
+        else {}
+    ),
+
+    current_events=current_events,
+
+    previous_event_data=(
+        previous_event_data
+        if has_baseline
+        else {}
+    ),
+
+    current_event_data=current_event_data,
+
+    config=detector_config,
+
+    closed_window=(
+        watch["kind"] == "closed"
+    ),
+)
 
     # STEP 9: Display event classification
     summary = result["event_summary"]
@@ -109,19 +161,19 @@ def main():
 
     print(f"\nAlerts generated: {len(alerts)}")
 
+    print(f"\nAlerts generated: {len(alerts)}")
+
     for alert in alerts:
-        print(
-            f"- {alert['alert_type']}: "
-            f"{alert['details']}"
-        )
+        print(f"- {alert['alert_type']}")
 
     # STEP 10: Save all results in PostgreSQL
     snapshot_id = save_run(
-        watch_id=watch_id,
-        fingerprint=fingerprint,
-        alerts=alerts,
-        event_hashes=current_events,
-    )
+    watch_id=watch_id,
+    fingerprint=fingerprint,
+    alerts=alerts,
+    event_hashes=current_events,
+    records=records,
+)
 
     print(f"\nSaved watch ID: {watch_id}")
     print(f"Saved snapshot ID: {snapshot_id}")
