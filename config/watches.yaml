@@ -1,15 +1,8 @@
 watches:
-  - name: closed-month
-    kind: closed
-    starttime: "2026-08-01"
-    endtime: "2026-09-01"
-    minmagnitude: 2.5
 
-    detectors:
-      min_count_change: 20
-      max_count_change_pct: 50
-      alert_on_revision: true
-      alert_on_content_change: false
+  # ----------------------------------------------------------
+  # MAIN CHANGE-DETECTION WATCH
+  # ----------------------------------------------------------
 
   - name: rolling-7d
     kind: rolling
@@ -20,4 +13,19 @@ watches:
       min_count_change: 20
       max_count_change_pct: 50
       alert_on_revision: true
-      alert_on_content_change: false
+      alert_on_content_change: true
+
+
+  # ----------------------------------------------------------
+  # REAL-TIME WATCH
+  # ----------------------------------------------------------
+
+  - name: live
+    kind: live
+    minmagnitude: 0
+
+    detectors:
+      min_count_change: 1
+      max_count_change_pct: 100
+      alert_on_revision: true
+      alert_on_content_change: true

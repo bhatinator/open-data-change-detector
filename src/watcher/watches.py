@@ -41,7 +41,7 @@ def load_watches(config_path=DEFAULT_CONFIG):
 
         names.add(name)
 
-        if kind not in ("closed", "rolling"):
+        if kind not in ("closed", "rolling", "live"):
             raise ValueError(
                 f"Watch '{name}' has an unsupported kind: {kind}"
             )
@@ -72,13 +72,16 @@ def load_watches(config_path=DEFAULT_CONFIG):
                     f"Watch '{name}': endtime must follow starttime."
                 )
 
-        else:
+        elif kind == "rolling":
             days = watch.get("days")
 
             if type(days) is not int or days <= 0:
                 raise ValueError(
                     f"Watch '{name}' needs a positive integer 'days'."
                 )
+
+        elif kind == "live":
+            pass
 
     return watches
 

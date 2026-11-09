@@ -149,7 +149,7 @@ def fetch_all_earthquakes(
     logger.info("Fetch completed: %s records", len(records))
     return records
 
-def fetch_realtime_earthquakes(timeout=30, retries=3):
+def fetch_realtime_earthquakes(timeout=30, retries=3, minmagnitude=None):
     """
     Fetch the latest earthquake data from the
     USGS real-time GeoJSON feed.
@@ -176,6 +176,19 @@ def fetch_realtime_earthquakes(timeout=30, retries=3):
 
             records = data.get("features", [])
 
+            if minmagnitude is not None:
+                records = [
+                    event
+                    for event in records
+                    if (
+                        event.get("properties", {})
+                        .get("mag") is not None
+                        and float(
+                            event["properties"]["mag"]
+                        ) >= minmagnitude
+                    )
+                ]
+            
             logger.info(
                 "Fetched %d earthquake events",
                 len(records),

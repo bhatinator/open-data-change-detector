@@ -1,8 +1,15 @@
 import time
 import json
 
-from watcher.fetcher import fetch_realtime_earthquakes
-from watcher.watches import load_watches
+from watcher.fetcher import (
+    fetch_all_earthquakes,
+    fetch_realtime_earthquakes,
+)
+
+from watcher.watches import (
+    load_watches,
+    build_query,
+)
 
 from watcher.fingerprint import compute_fingerprint
 
@@ -17,63 +24,41 @@ from watcher.db import (
 from watcher.detectors import run_detectors
 
 
-# Check the USGS real-time feed every 5 minutes
-POLL_INTERVAL_SECONDS = 30
+# Check both watches every 5 minutes
+POLL_INTERVAL_SECONDS = 300
 
 
-def run_once():
+def run_watch(watch):
     """
-    Run the watcher once.
+    Run one configured watch.
 
-    This function:
-    1. Loads the watch configuration
-    2. Gets the previous snapshot
-    3. Fetches the latest USGS real-time earthquake data
-    4. Computes the fingerprint
-    5. Detects changes
-    6. Saves everything to PostgreSQL
+    rolling:
+        Uses the USGS historical API for the configured
+        rolling time window.
+
+    live:
+        Uses the USGS real-time GeoJSON feed.
     """
+
+    watch_name = watch["name"]
+    watch_kind = watch["kind"]
 
     print("\n" + "=" * 60)
-    print("Starting watcher run")
+    print(f"Running watch: {watch_name}")
     print("=" * 60)
 
     # ---------------------------------------------------------
-    # STEP 1: Load watch configurations
-    # ---------------------------------------------------------
-
-    watches = load_watches()
-
-    # ---------------------------------------------------------
-    # STEP 2: Select the watch
-    # ---------------------------------------------------------
-
-    watch = next(
-        (
-            item
-            for item in watches
-            if item["name"] == "rolling-7d"
-        ),
-        None,
-    )
-
-    if watch is None:
-        raise ValueError(
-            "The rolling-7d watch was not found."
-        )
-
-    print(f"Running watch: {watch['name']}")
-
-    # ---------------------------------------------------------
-    # STEP 3: Register watch and load previous state
+    # STEP 1: Register watch and load previous state
     # ---------------------------------------------------------
 
     watch_id = upsert_watch(
-        watch["name"],
+        watch_name,
         watch,
     )
 
-    previous = get_latest_snapshot(watch_id)
+    previous = get_latest_snapshot(
+        watch_id
+    )
 
     if previous is None:
 
@@ -113,16 +98,48 @@ def run_once():
         )
 
     # ---------------------------------------------------------
-    # STEP 4: Fetch real-time USGS earthquake records
+    # STEP 2: Fetch data according to watch type
     # ---------------------------------------------------------
 
-    print(
-        "\nFetching USGS real-time earthquake feed..."
-    )
+    print("\nFetching USGS earthquake data...")
 
     start = time.perf_counter()
 
-    records = fetch_realtime_earthquakes()
+    if watch_kind == "rolling":
+
+        query = build_query(watch)
+
+        print(
+            "Using USGS historical API."
+        )
+
+        print(
+            f"Query: {query}"
+        )
+
+        records = fetch_all_earthquakes(
+            query=query,
+            page_size=100,
+            max_records=5000,
+        )
+
+    elif watch_kind == "live":
+
+        print(
+            "Using USGS real-time feed."
+        )
+
+        records = fetch_realtime_earthquakes(
+            minmagnitude=float(
+                watch["minmagnitude"]
+            )
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unsupported watch kind: {watch_kind}"
+        )
 
     fetch_duration = (
         time.perf_counter() - start
@@ -138,7 +155,7 @@ def run_once():
     )
 
     # ---------------------------------------------------------
-    # STEP 5: Compute fingerprint
+    # STEP 3: Compute fingerprint
     # ---------------------------------------------------------
 
     fingerprint = compute_fingerprint(
@@ -163,7 +180,7 @@ def run_once():
     )
 
     # ---------------------------------------------------------
-    # STEP 6: Load detector thresholds
+    # STEP 4: Load detector configuration
     # ---------------------------------------------------------
 
     detector_config = watch.get(
@@ -172,13 +189,8 @@ def run_once():
     )
 
     # ---------------------------------------------------------
-    # STEP 7: Determine whether a valid baseline exists
+    # STEP 5: Determine whether a baseline exists
     # ---------------------------------------------------------
-
-    # The first run becomes the baseline.
-    #
-    # We only compare against the previous snapshot
-    # if it actually contains event data.
 
     has_baseline = (
         previous is not None
@@ -200,7 +212,7 @@ def run_once():
         )
 
     # ---------------------------------------------------------
-    # STEP 8: Compare previous and current states
+    # STEP 6: Detect changes
     # ---------------------------------------------------------
 
     result = run_detectors(
@@ -230,19 +242,27 @@ def run_once():
 
         config=detector_config,
 
-        # IMPORTANT:
-        # The real-time feed is not a closed historical
-        # dataset, so removed events should not be treated
-        # as actual dataset removals.
+        # Neither rolling nor live is a closed dataset.
+        #
+        # For rolling-7d, an event leaving the 7-day window
+        # is not necessarily "removed".
+        #
+        # For live, an event leaving the real-time feed
+        # is also not necessarily "removed".
         closed_window=False,
     )
 
     # ---------------------------------------------------------
-    # STEP 9: Display event classification
+    # STEP 7: Display results
     # ---------------------------------------------------------
 
-    summary = result["event_summary"]
-    alerts = result["alerts"]
+    summary = result[
+        "event_summary"
+    ]
+
+    alerts = result[
+        "alerts"
+    ]
 
     print("\nEvent classification:")
 
@@ -265,7 +285,7 @@ def run_once():
         )
 
     # ---------------------------------------------------------
-    # STEP 10: Save all results in PostgreSQL
+    # STEP 8: Save everything to PostgreSQL
     # ---------------------------------------------------------
 
     snapshot_id = save_run(
@@ -297,21 +317,70 @@ def run_once():
     )
 
     print(
-        "Watcher run completed successfully."
+        f"Watch '{watch_name}' "
+        f"completed successfully."
     )
+
+
+def run_once():
+    """
+    Run all configured watches once.
+
+    Each watch is processed independently so that
+    rolling-7d and live maintain separate database
+    histories and baselines.
+    """
+
+    print("\n" + "#" * 60)
+    print("STARTING WATCHER CYCLE")
+    print("#" * 60)
+
+    watches = load_watches()
+
+    print(
+        f"Configured watches: "
+        f"{len(watches)}"
+    )
+
+    for watch in watches:
+
+        try:
+
+            run_watch(watch)
+
+        except Exception as error:
+
+            print(
+                "\nWatch failed:"
+            )
+
+            print(
+                f"Watch: {watch.get('name')}"
+            )
+
+            print(
+                f"Error: "
+                f"{type(error).__name__}: "
+                f"{error}"
+            )
+
+            print(
+                "The remaining watches will "
+                "still be attempted."
+            )
 
 
 def main():
     """
-    Continuously run the watcher every 5 minutes.
+    Continuously run all watches every 5 minutes.
     """
 
     print("=" * 60)
-    print("LIVE USGS EARTHQUAKE WATCHER")
+    print("USGS OPEN DATA CHANGE DETECTOR")
     print("=" * 60)
 
     print(
-        "Polling interval: "
+        "Configured polling interval: "
         f"{POLL_INTERVAL_SECONDS} seconds "
         "(5 minutes)"
     )
@@ -337,7 +406,7 @@ def main():
         except Exception as error:
 
             print(
-                "\nWatcher run failed:"
+                "\nWatcher cycle failed:"
             )
 
             print(
@@ -346,13 +415,13 @@ def main():
             )
 
             print(
-                "The watcher will continue "
-                "and retry on the next cycle."
+                "The watcher will retry "
+                "on the next cycle."
             )
 
         print(
             "\nWaiting 5 minutes "
-            "before the next check..."
+            "before the next cycle..."
         )
 
         try:
