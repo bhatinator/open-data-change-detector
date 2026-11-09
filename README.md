@@ -2,7 +2,6 @@
 
 ### Automated monitoring, change detection, PostgreSQL persistence, Discord alerts, and a Streamlit dashboard for live and historical open-data sources.
 
-
 <p align="center">
   <strong>
     📊 Real-time Monitoring
@@ -65,13 +64,11 @@
 
 # 🚀 Overview
 
-**Open Data Change Detector** is a Python-based data monitoring and observability system designed to continuously watch open datasets and identify meaningful changes between successive data snapshots.
+**Open Data Change Detector** is a Python-based data monitoring and observability system that continuously watches open datasets and identifies meaningful changes between successive snapshots.
 
-The project currently uses the **USGS Earthquake API** and the **USGS real-time earthquake feed** as its primary data sources.
+The project currently monitors the **USGS Earthquake API** and **USGS real-time earthquake feed**.
 
-Instead of simply downloading the latest dataset, the system maintains historical snapshots and compares the current state of the data against previous runs.
-
-This allows it to identify changes such as:
+Instead of only checking whether an API is reachable or whether the row count changed, the system maintains historical state and compares the current dataset against previous snapshots. This allows it to detect:
 
 - ➕ New records
 - ➖ Removed records
@@ -80,7 +77,7 @@ This allows it to identify changes such as:
 - 📊 Significant row-count changes
 - 🧱 Schema changes
 - ⚠️ Fetch failures
-- 🕐 Unexpected data behavior
+- 🕐 Unexpected data behaviour
 - 🐌 Slow data retrieval
 
 Detected changes are persisted in **PostgreSQL**, displayed through an interactive **Streamlit dashboard**, and can be delivered through **Discord notifications**.
@@ -91,21 +88,19 @@ Detected changes are persisted in **PostgreSQL**, displayed through an interacti
 
 External datasets and APIs are not always stable.
 
-A dataset that works correctly today may behave differently tomorrow.
-
-For example:
+A dataset may return:
 
 ```text
 Yesterday:
-304 earthquake records
+304 records
 
 Today:
-307 earthquake records
+307 records
 ```
 
-That could simply mean that three new earthquakes occurred.
+That could simply mean three new events were added.
 
-However, other situations may be more difficult to detect:
+The harder case is:
 
 ```text
 Yesterday:
@@ -115,9 +110,7 @@ Today:
 304 records
 ```
 
-The row count is identical, but an existing earthquake may have been modified.
-
-For example:
+The row count is unchanged, but an existing record may have been modified:
 
 ```text
 Magnitude:
@@ -133,17 +126,13 @@ California → Southern California
 
 A basic row-count check would miss this.
 
-The purpose of this project is therefore to create a monitoring layer capable of detecting both **obvious and subtle dataset changes**.
+The purpose of this project is therefore to monitor **dataset state**, not just dataset availability.
 
 ---
 
 # 💡 Core Idea
 
-The system follows a simple principle:
-
 > **Every dataset fetch becomes a snapshot, every snapshot receives a fingerprint, and every new fingerprint is compared against the previous state.**
-
-Conceptually:
 
 ```text
 Fetch
@@ -152,15 +141,15 @@ Validate
   ↓
 Fingerprint
   ↓
-Compare
+Compare with Previous State
   ↓
 Classify Changes
   ↓
 Persist
   ↓
-Alert
+Generate Alerts
   ↓
-Visualize
+Notify / Visualize
 ```
 
 ---
@@ -169,7 +158,6 @@ Visualize
 
 ```mermaid
 flowchart TD
-
     A[USGS Earthquake Data] --> B{Data Source}
 
     B --> C[Historical API<br/>Rolling 7 Days]
@@ -179,55 +167,53 @@ flowchart TD
     D --> E
 
     E --> F[Data Validation]
-
     F --> G[Fingerprint Engine]
-
     G --> H[Change Detection Engine]
 
     H --> I[(PostgreSQL)]
-
     H --> J[Alert Generation]
 
     J --> K[Notification Outbox]
-
     K --> L[Discord Webhook]
 
     I --> M[Streamlit Dashboard]
-
     M --> N[Charts]
     M --> O[Earthquake Map]
     M --> P[Snapshot History]
     M --> Q[Recent Alerts]
 ```
 
+The system is organized around three runtime processes:
+
+| Process | Responsibility |
+|---|---|
+| **Watcher** — `src/run_watcher.py` | Fetches data, validates it, fingerprints it, compares it with previous state, detects changes, generates alerts, and persists results |
+| **Notification Service** — `src/send_notifications.py` | Reads pending records from the PostgreSQL notification outbox and delivers them to Discord |
+| **Dashboard** — `src/dashboard.py` | Reads monitoring state from PostgreSQL and presents charts, maps, events, alerts, and history |
+
+This separation keeps **monitoring**, **notification delivery**, and **visualization** independent.
+
 ---
 
-# 🔄 End-to-End Workflow
+# 🔄 Monitoring Workflow
 
 ```mermaid
 flowchart LR
-
-    A[External Dataset] --> B[Fetch Data]
-
-    B --> C[Validate Response]
-
-    C --> D[Create Fingerprint]
-
+    A[External Dataset] --> B[Fetch]
+    B --> C[Validate]
+    C --> D[Fingerprint]
     D --> E[Load Previous Snapshot]
-
-    E --> F[Compare Current vs Previous]
-
-    F --> G{Change Detected?}
+    E --> F[Compare]
+    F --> G{Change?}
 
     G -->|No| H[Store Snapshot]
-
     G -->|Yes| I[Classify Change]
 
-    I --> J[Added Events]
-    I --> K[Removed Events]
-    I --> L[Revised Events]
-    I --> M[Content Changes]
-    I --> N[Count Changes]
+    I --> J[Added]
+    I --> K[Removed]
+    I --> L[Revised]
+    I --> M[Content Change]
+    I --> N[Count Change]
 
     J --> O[Generate Alert]
     K --> O
@@ -236,80 +222,58 @@ flowchart LR
     N --> O
 
     O --> P[(PostgreSQL)]
-    O --> Q[Discord]
+    O --> Q[Notification Outbox]
+    Q --> R[Discord]
 
-    P --> R[Streamlit Dashboard]
+    P --> S[Streamlit Dashboard]
 ```
+
+The watcher performs the complete ingestion-to-persistence workflow. The notification service then handles delivery independently.
 
 ---
 
 # 🔍 Change Detection
 
-The detector performs event-level and dataset-level comparisons.
+The detector performs both **event-level** and **dataset-level** comparisons.
 
-## ➕ 1. Events Added
+### ➕ Events Added
 
-If an event exists in the current dataset but was not present in the previous snapshot:
+An event exists in the current snapshot but not in the previous snapshot.
 
 ```text
-Previous:
-304 events
+Previous: 304 events
+Current:  307 events
 
-Current:
-307 events
-
-Detected:
-3 events added
+Detected: 3 events added
 ```
 
-The system records the new event IDs.
+### ➖ Events Removed
 
----
-
-## ➖ 2. Events Removed
-
-If an event existed previously but is missing from the current snapshot:
+An event existed previously but is missing from the current snapshot.
 
 ```text
-Previous:
-304 events
+Previous: 304 events
+Current:  301 events
 
-Current:
-301 events
-
-Detected:
-3 events removed
+Detected: 3 events removed
 ```
 
-This can indicate an upstream deletion, correction, or unexpected data change.
+### ✏️ Events Revised
 
----
-
-## ✏️ 3. Events Revised
-
-An event can remain present while one or more of its fields changes.
-
-Example:
+An event remains present, but its fingerprint changes.
 
 ```text
-Event ID:
-abc123
+Event ID: abc123
 
 Magnitude:
 5.1 → 5.3
+
+→ EVENTS_REVISED
 ```
 
-The event remains in the dataset, but its fingerprint changes.
+### 🔄 Content Changes
 
-The detector classifies this as a revision.
-
----
-
-## 🔄 4. Content Changes
-
-Content changes allow the system to identify silent modifications to existing records.
-
-For example:
+Existing records can change without changing the total row count.
 
 ```text
 Before:
@@ -319,15 +283,9 @@ After:
 Place = "Southern California"
 ```
 
-Even if the total number of records remains unchanged, the system can detect the modification.
+### 📊 Count Changes
 
----
-
-## 📊 5. Count Changes
-
-The detector also monitors the total number of records.
-
-Example:
+The total number of records is compared against configurable thresholds.
 
 ```text
 Previous count: 304
@@ -336,29 +294,21 @@ Current count: 352
 Difference: +48
 ```
 
-Thresholds can be configured to determine whether such a change should generate an alert.
+### 🧱 Schema Changes
 
----
-
-## 🧱 6. Schema Changes
-
-A dataset's structure is also part of its fingerprint.
-
-The system can monitor changes involving:
+Schema information is included in the fingerprint so the system can monitor:
 
 - Added fields
 - Removed fields
 - Renamed fields
 - Changed field types
-- Unexpected structural changes
-
-This is particularly important for production data pipelines because an upstream schema change can break downstream processing.
+- Other unexpected structural changes
 
 ---
 
 # 🧬 Dataset Fingerprinting
 
-Every successful fetch produces a dataset fingerprint.
+Every successful fetch produces a compact representation of the dataset state.
 
 The fingerprint captures information such as:
 
@@ -372,21 +322,13 @@ Fetch Duration
 Newest Event Timestamp
 ```
 
-The general process is:
-
 ```mermaid
 flowchart TD
-
     A[Dataset] --> B[Extract Schema]
-
     A --> C[Count Records]
-
     A --> D[Extract Event IDs]
-
     D --> E[Hash Individual Events]
-
     E --> F[Generate Content Hash]
-
     A --> G[Collect Fetch Metadata]
 
     B --> H[Dataset Fingerprint]
@@ -395,37 +337,33 @@ flowchart TD
     G --> H
 ```
 
-The resulting fingerprint provides a compact representation of the state of the dataset at a particular point in time.
+This gives the watcher a compact representation of dataset state that can be compared with previous snapshots.
 
 ---
 
 # 🗄️ PostgreSQL Persistence
 
-PostgreSQL acts as the historical state store for the monitoring system.
+PostgreSQL is the historical state store for the monitoring system.
 
-Instead of keeping only the latest dataset, the system stores:
+The database stores:
 
-- Watches
-- Snapshots
+- Watch configurations
+- Dataset snapshots
+- Snapshot event records
 - Event fingerprints
-- Event data
 - Event state
 - Alerts
-- Notification records
+- Notification outbox records
 
-This makes it possible to reconstruct what happened over time.
+This historical state enables both change detection and monitoring over time.
 
----
-
-# 🧩 Database Design
+## Database Design
 
 ```mermaid
 erDiagram
-
     WATCHES ||--o{ SNAPSHOTS : contains
     WATCHES ||--o{ EVENT_STATE : tracks
     WATCHES ||--o{ ALERTS : generates
-
     SNAPSHOTS ||--o{ SNAPSHOT_EVENTS : contains
     ALERTS ||--o{ NOTIFICATION_OUTBOX : queues
 
@@ -483,13 +421,13 @@ erDiagram
 
 # 👀 Monitoring Watches
 
-The project supports multiple independent monitoring watches.
+Monitoring behaviour is configured in `config/watches.yaml`.
 
-Currently, the system uses two primary watches.
+The project currently uses two primary watches.
 
 ## 🔵 Rolling 7-Day Watch
 
-The rolling watch queries the historical USGS API for earthquake events occurring during the previous seven days.
+Queries the historical USGS API for earthquake events from the previous seven days.
 
 ```yaml
 - name: rolling-7d
@@ -504,13 +442,11 @@ The rolling watch queries the historical USGS API for earthquake events occurrin
     alert_on_content_change: true
 ```
 
-This provides a historical monitoring window and is useful for detecting revisions and unexpected changes in recent earthquake records.
-
----
+This watch provides a historical monitoring window and is useful for detecting revisions and unexpected changes to recent records.
 
 ## 🟢 Live Watch
 
-The live watch uses the USGS real-time feed.
+Uses the USGS real-time earthquake feed.
 
 ```yaml
 - name: live
@@ -524,39 +460,27 @@ The live watch uses the USGS real-time feed.
     alert_on_content_change: true
 ```
 
-The live watch uses a minimum magnitude of `0` so that valid earthquake events are included regardless of magnitude.
+A minimum magnitude of `0` allows valid earthquake events to be included regardless of magnitude.
 
----
+### Configuration-Driven Design
 
-# ⚙️ Configuration-Driven Design
+The YAML configuration controls:
 
-One of the project's design goals is to avoid hard-coding monitoring behavior inside the application.
-
-Instead, watches are defined in:
-
-```text
-config/watches.yaml
-```
-
-This makes it possible to modify:
-
-- Watch names
+- Watch name
 - Watch type
 - Time window
 - Magnitude threshold
-- Count thresholds
+- Count-change thresholds
 - Revision detection
 - Content-change detection
 
-without rewriting the monitoring engine.
+This allows monitoring behaviour to be changed without modifying the core Python code.
 
 ---
 
 # 🚨 Alert System
 
-The detector can generate alerts for several conditions.
-
-Typical alert types include:
+The detector can generate structured alerts such as:
 
 ```text
 EVENTS_ADDED
@@ -567,9 +491,9 @@ COUNT_CHANGED
 FETCH_FAILED
 ```
 
-The alerts contain structured information describing what happened.
+An alert can contain details about the affected event and the change that occurred.
 
-For example:
+Example:
 
 ```text
 EVENTS_REVISED
@@ -587,67 +511,56 @@ Current value:
 5.3
 ```
 
-This information is persisted in PostgreSQL and displayed in the dashboard.
+Alerts are persisted in PostgreSQL and exposed through the dashboard. When notification delivery is enabled, the alert can also enter the notification outbox.
 
 ---
 
 # 💬 Discord Notifications
 
-When an alert is generated, the system can send it through a Discord webhook.
+The project deliberately separates **alert generation** from **notification delivery**.
 
 ```mermaid
 flowchart LR
-
-    A[USGS Data] --> B[Fetcher]
-
+    A[USGS Data] --> B[Watcher]
     B --> C[Fingerprint]
-
-    C --> D[Change Detector]
-
+    C --> D[Change Detection]
     D -->|Change| E[Alert Generator]
-
     E --> F[(PostgreSQL)]
-
     E --> G[Notification Outbox]
-
-    G --> H[Discord Webhook]
-
-    H --> I[Discord Channel]
+    G --> H[Notification Service]
+    H --> I[Discord Webhook]
+    I --> J[Discord Channel]
 ```
+
+This architecture means the watcher can persist an alert without being responsible for delivering every notification.
 
 ### 💬 Join the Project Discord
 
-If you want to follow the monitoring system, alerts, development, or future improvements, join the project Discord community:
-
-**[Join the Open Data Change Detector Discord Community](https://discord.gg/BGZ4KUmav)**
+[Join the Open Data Change Detector Discord Community](https://discord.gg/BGZ4KUmav)
 
 ---
 
 # 📊 Streamlit Dashboard
 
-The project includes an interactive Streamlit dashboard designed to provide a visual monitoring interface.
+The dashboard provides a visual monitoring interface backed by PostgreSQL.
 
-The dashboard displays:
+It displays:
 
 - 📌 Current dataset information
 - 📈 Event-count history
 - 🌎 Global earthquake map
 - 🚨 Recent alerts
-- 🟠 Revised events
+- ✏️ Revised events
 - ⏱️ Fetch performance
 - 📅 Snapshot history
 - 🔎 Watch selection
 - 🔄 Automatic refresh
 
-The dashboard dynamically loads registered watches from PostgreSQL.
+The dashboard dynamically loads registered watches and displays watch-specific monitoring data.
 
----
+## 🌎 Earthquake Visualization
 
-# 🌎 Earthquake Visualization
-
-The dashboard extracts geographic information from USGS GeoJSON records.
-
-The visualization uses:
+The dashboard extracts geographic information from USGS GeoJSON records:
 
 ```text
 Longitude
@@ -657,7 +570,7 @@ Magnitude
 Location
 ```
 
-This allows monitored earthquake events to be displayed geographically.
+These values are used to display monitored earthquake events geographically.
 
 ---
 
@@ -665,31 +578,23 @@ This allows monitored earthquake events to be displayed geographically.
 
 Every monitoring run creates a snapshot.
 
-For example:
-
 ```text
 Snapshot 1
 304 events
-
-        ↓
-
+      ↓
 Snapshot 2
 304 events
-
-        ↓
-
+      ↓
 Snapshot 3
 305 events
 +1 event
-
-        ↓
-
+      ↓
 Snapshot 4
 305 events
 1 revised event
 ```
 
-This historical approach makes the system useful not only for detecting changes but also for understanding how the dataset evolves over time.
+Because snapshots and event-level state are retained, the system can show how the monitored dataset evolves instead of only showing its current state.
 
 ---
 
@@ -708,8 +613,7 @@ This historical approach makes the system useful not only for detecting changes 
 | **Pandas** | Data processing |
 | **pytest** | Automated testing |
 | **Discord Webhooks** | Notifications |
-| **Git** | Version control |
-| **GitHub** | Source code hosting |
+| **Git / GitHub** | Version control and source hosting |
 | **USGS API** | Earthquake data source |
 
 ---
@@ -724,6 +628,7 @@ open-data-change-detector/
 ├── .gitignore
 ├── docker-compose.yml
 ├── README.md
+├── requirements.txt
 │
 ├── config/
 │   └── watches.yaml
@@ -738,6 +643,11 @@ open-data-change-detector/
 ├── src/
 │   ├── dashboard.py
 │   ├── run_watcher.py
+│   ├── send_notifications.py
+│   ├── check_api_connection.py
+│   ├── test_discord.py
+│   ├── test_fetcher.py
+│   ├── test_watches.py
 │   │
 │   └── watcher/
 │       ├── __init__.py
@@ -746,8 +656,8 @@ open-data-change-detector/
 │       ├── watches.py
 │       ├── db.py
 │       ├── detectors.py
-│       ├── discord_notifier.py
-│       └── send_notifications.py
+│       ├── notifier.py
+│       └── discord_notifier.py
 │
 ├── tests/
 │
@@ -766,21 +676,21 @@ open-data-change-detector/
 
 # 🐳 PostgreSQL with Docker
 
-The project uses PostgreSQL through Docker.
+PostgreSQL runs locally through Docker Compose.
 
-Start the database:
+### Start
 
 ```bash
 docker compose up -d
 ```
 
-Check the running containers:
+### Check
 
 ```bash
 docker ps
 ```
 
-Stop the database:
+### Stop
 
 ```bash
 docker compose down
@@ -796,48 +706,55 @@ sql/schema.sql
 
 # ▶️ Running the Project
 
-## 1. Clone the repository
+The following setup is the complete local workflow.
+
+## 1. Clone the Repository
 
 ```bash
 git clone <your-repository-url>
 cd open-data-change-detector
 ```
 
-## 2. Create and activate a virtual environment
+## 2. Create and Activate a Virtual Environment
 
-Windows:
+### Windows PowerShell
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-## 3. Install dependencies
+### Git Bash
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+```
+
+## 3. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 4. Configure environment variables
+## 4. Configure Environment Variables
 
-Create:
-
-```text
-.env
-```
-
-Example:
+Create `.env` in the project root:
 
 ```env
 DATABASE_URL=postgresql://watcher:password@localhost:5432/dataset_watcher
 DISCORD_WEBHOOK_URL=your_webhook_url
 ```
 
+### Security
+
 Never commit the real `.env` file.
 
----
+Keep database passwords, Discord webhook URLs, API credentials, access tokens, private keys, and other secrets out of source control.
 
-# 🐘 Start PostgreSQL
+Use `.env.example` with placeholder values instead.
+
+## 5. Start PostgreSQL
 
 ```bash
 docker compose up -d
@@ -849,47 +766,112 @@ Verify:
 docker ps
 ```
 
----
-
-# ▶️ Run the Watcher
-
-From the project root:
+## 6. Start the Watcher
 
 ```bash
 python src/run_watcher.py
 ```
 
-The watcher will:
+The watcher:
 
-1. Load the configured watches.
-2. Fetch the dataset.
-3. Validate the response.
-4. Generate a fingerprint.
-5. Load the previous snapshot.
-6. Compare current and previous state.
-7. Classify detected changes.
-8. Generate alerts.
-9. Save the new snapshot.
-10. Store event-level information.
-11. Send notifications when configured.
+1. Loads configured watches.
+2. Fetches the appropriate USGS dataset/feed.
+3. Validates the response.
+4. Generates a dataset fingerprint.
+5. Loads the previous snapshot.
+6. Compares event IDs and hashes.
+7. Classifies added, removed, revised, and unchanged events.
+8. Evaluates configured alert thresholds.
+9. Saves snapshot and event-level state.
+10. Creates alerts when required.
+11. Adds notification records to the outbox.
 
----
+## 7. Start the Notification Service
 
-# 📊 Run the Dashboard
+Open a second terminal:
 
-Start Streamlit with:
+```bash
+python src/send_notifications.py
+```
+
+The service continuously checks the PostgreSQL notification outbox and sends pending alerts through the configured Discord webhook.
+
+## 8. Start the Dashboard
+
+Open a third terminal:
 
 ```bash
 streamlit run src/dashboard.py
 ```
 
-The dashboard will open in your browser.
+The dashboard reads monitoring state from PostgreSQL and presents charts, maps, events, alerts, and snapshot history.
+
+---
+
+# 🖥️ Recommended Terminal Setup
+
+Run the three processes simultaneously:
+
+### Terminal 1 — Watcher
+
+```bash
+python src/run_watcher.py
+```
+
+### Terminal 2 — Notification Service
+
+```bash
+python src/send_notifications.py
+```
+
+### Terminal 3 — Streamlit Dashboard
+
+```bash
+streamlit run src/dashboard.py
+```
+
+The resulting local workflow is:
+
+```text
+                         USGS
+                           │
+                           ▼
+                    run_watcher.py
+                           │
+                           ▼
+                 Fetch + Validate
+                           │
+                           ▼
+                      Fingerprint
+                           │
+                           ▼
+                   Change Detection
+                           │
+                           ▼
+                      PostgreSQL
+                      │          │
+                      │          ▼
+                      │    Notification Outbox
+                      │          │
+                      │          ▼
+                      │   send_notifications.py
+                      │          │
+                      │          ▼
+                      │       Discord
+                      │
+                      ▼
+                Streamlit Dashboard
+                      │
+             ┌────────┼────────┐
+             ▼        ▼        ▼
+          Charts     Map     Alerts
+```
 
 ---
 
 # 🧪 Testing
 
-The project uses `pytest` for automated testing.
+The project uses **pytest** for automated testing.
 
 Run:
 
@@ -897,7 +879,7 @@ Run:
 pytest
 ```
 
-Tests cover important parts of the monitoring system, including:
+The tests cover important areas including:
 
 - Watch configuration
 - Query generation
@@ -906,34 +888,93 @@ Tests cover important parts of the monitoring system, including:
 - Change detection
 - Dataset comparison
 
+A successful test run should complete without failures.
+
 ---
 
 # 🔐 Environment Variables
 
-Sensitive configuration should be stored in `.env`.
-
-Example:
+Required configuration:
 
 ```env
 DATABASE_URL=postgresql://watcher:password@localhost:5432/dataset_watcher
 DISCORD_WEBHOOK_URL=your_webhook_url
 ```
 
-The repository should contain:
-
-```text
-.env.example
-```
-
-instead of the real `.env`.
-
-### Never commit:
+Recommended repository setup:
 
 ```text
 .env
+.env.example
+.gitignore
 ```
 
-or real Discord webhook URLs, database passwords, API credentials, or other secrets.
+Example `.gitignore` entries:
+
+```gitignore
+.env
+.venv/
+__pycache__/
+*.pyc
+```
+
+Never commit real credentials or webhook URLs.
+
+---
+
+# 🛑 Stopping the Project
+
+Stop the three Python processes from their respective terminals.
+
+Then stop PostgreSQL:
+
+```bash
+docker compose down
+```
+
+To start it again:
+
+```bash
+docker compose up -d
+```
+
+---
+
+# ⚡ Quick Start
+
+After the repository has already been configured:
+
+```powershell
+.venv\Scripts\activate
+```
+
+```bash
+docker compose up -d
+```
+
+In Terminal 1:
+
+```bash
+python src/run_watcher.py
+```
+
+In Terminal 2:
+
+```bash
+python src/send_notifications.py
+```
+
+In Terminal 3:
+
+```bash
+streamlit run src/dashboard.py
+```
+
+Run tests whenever required:
+
+```bash
+pytest
+```
 
 ---
 
@@ -941,11 +982,9 @@ or real Discord webhook URLs, database passwords, API credentials, or other secr
 
 The project currently uses the **USGS Earthquake Hazards Program**.
 
-Two types of data access are used.
-
 ### Historical Earthquake API
 
-Used by the rolling seven-day watch.
+Used by the rolling seven-day watch:
 
 ```text
 USGS FDSN Event API
@@ -953,78 +992,41 @@ USGS FDSN Event API
 
 ### Real-Time Earthquake Feed
 
-Used by the live watch.
+Used by the live watch:
 
 ```text
 USGS all_hour.geojson
 ```
 
-The architecture is intentionally designed so additional open-data sources can be integrated later.
+The architecture is intentionally separated from the data source so additional open-data connectors can be integrated later.
 
 ---
 
 # 🧠 Data Engineering Concepts Demonstrated
 
-This project brings together several practical data engineering concepts.
-
-### 1. API Data Ingestion
-
-The system retrieves structured data from external APIs and feeds.
-
-### 2. Data Validation
-
-Incoming responses are checked before being processed.
-
-### 3. Data Fingerprinting
-
-Dataset state is represented through hashes and metadata.
-
-### 4. Change Detection
-
-Current data is compared against historical state.
-
-### 5. Event-Level State Tracking
-
-Individual records are tracked across multiple snapshots.
-
-### 6. Database Persistence
-
-Monitoring state is persisted using PostgreSQL.
-
-### 7. Alerting
-
-Unexpected changes can trigger structured alerts.
-
-### 8. Observability
-
-The system records:
-
-```text
-Fetch status
-Fetch duration
-Event counts
-Snapshot history
-Content changes
-Alerts
-```
-
-### 9. Data Visualization
-
-The Streamlit dashboard provides a visual interface for monitoring the system.
-
-### 10. Containerization
-
-PostgreSQL is deployed locally through Docker.
+| Concept | Implementation |
+|---|---|
+| API ingestion | Fetch structured data from external APIs and feeds |
+| Data validation | Validate incoming responses before processing |
+| Data fingerprinting | Represent dataset state with hashes and metadata |
+| Change detection | Compare current state with historical state |
+| Event-level state tracking | Track individual records across snapshots |
+| Database persistence | Store monitoring state in PostgreSQL |
+| Alerting | Generate structured alerts for unexpected changes |
+| Observability | Track fetch status, duration, counts, history, and alerts |
+| Visualization | Monitor system state through Streamlit |
+| Containerization | Run PostgreSQL through Docker |
+| Configuration management | Define watches and thresholds in YAML |
+| Notification architecture | Decouple alert generation from delivery |
 
 ---
 
 # 🔬 Example Detection Scenario
 
-Suppose the system records:
+Suppose:
 
 ```text
 Previous Snapshot
-
 Events: 304
 ```
 
@@ -1032,27 +1034,26 @@ The next run returns:
 
 ```text
 Current Snapshot
-
 Events: 305
 ```
 
-The detector discovers:
+The detector identifies:
 
 ```text
 +1 new event
 ```
 
-It then stores:
+The system can store the new event's:
 
 ```text
-New event ID
+Event ID
 Event fingerprint
 Event data
 Snapshot ID
-Alert
+Alert information
 ```
 
-If the new event crosses the configured threshold, a notification can be generated.
+If the configured threshold requires a notification, the alert is placed into the notification outbox and can be delivered to Discord.
 
 ---
 
@@ -1062,7 +1063,6 @@ Suppose:
 
 ```text
 Previous:
-
 Event ID: abc123
 Magnitude: 4.8
 ```
@@ -1071,32 +1071,27 @@ The next fetch returns:
 
 ```text
 Current:
-
 Event ID: abc123
 Magnitude: 5.0
 ```
 
-The event ID is unchanged, but the event fingerprint changes.
+The event ID is unchanged, but its fingerprint changes.
 
-The detector therefore identifies:
+The detector identifies:
 
 ```text
 EVENTS_REVISED
 ```
 
-and records the changed field:
+and records:
 
 ```text
-magnitude
-
-Before:
-4.8
-
-After:
-5.0
+Field: magnitude
+Before: 4.8
+After:  5.0
 ```
 
-This is one of the key differences between this project and a simple row-count monitoring script.
+This is a key difference between this project and a simple row-count monitoring script.
 
 ---
 
@@ -1122,17 +1117,13 @@ This is one of the key differences between this project and a simple row-count m
 
 # 🎥 Full Project Demo
 
-The complete dashboard demonstration is available here:
-
-**[▶️ Watch the Full Dashboard Demo](docs/demo/dashboard-demo.mp4)**
+[▶️ Watch the Full Dashboard Demo](docs/demo/dashboard-demo.mp4)
 
 ---
 
 # 🔮 Future Improvements
 
-The project can be extended significantly.
-
-Potential improvements include:
+Potential extensions include:
 
 - [ ] Support for additional open-data APIs
 - [ ] Automated schema-drift detection
@@ -1159,44 +1150,34 @@ Potential improvements include:
 
 The current version is designed for local development using Docker and PostgreSQL.
 
-A production deployment could look like:
+A production deployment could evolve toward:
 
 ```mermaid
 flowchart TD
-
     A[External Open Data APIs] --> B[Scheduled Data Worker]
-
     B --> C[Data Fetcher]
-
     C --> D[Fingerprint Engine]
-
     D --> E[Change Detection]
-
     E --> F[(Cloud PostgreSQL)]
 
     E --> G[Alert Service]
-
     G --> H[Discord]
     G --> I[Email]
     G --> J[Slack]
 
     F --> K[Streamlit Dashboard]
-
     K --> L[Cloud Hosting]
 
     M[Prometheus] --> B
     M --> K
-
     N[Grafana] --> M
 ```
 
-This architecture could eventually support monitoring many different datasets simultaneously.
+This could eventually support multiple datasets, scheduled workers, centralized monitoring, cloud storage, and production-grade observability.
 
 ---
 
 # 📈 Why This Project Matters
-
-The project demonstrates an important idea in modern data engineering:
 
 > **Data pipelines should monitor the data they depend on, not simply process it.**
 
@@ -1243,7 +1224,7 @@ A monitoring layer helps detect these conditions before they propagate into down
 
 Contributions, ideas, and improvements are welcome.
 
-Possible areas for contribution include:
+Possible areas include:
 
 - Additional dataset connectors
 - New anomaly detectors
